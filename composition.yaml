@@ -1,0 +1,32 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: function-dummy
+spec:
+  compositeTypeRef:
+    apiVersion: example.crossplane.io/v1
+    kind: XR
+  mode: Pipeline
+  pipeline:
+  - step: return-some-results
+    functionRef:
+      name: function-dummy
+    input:
+      apiVersion: dummy.fn.crossplane.io/v1beta1
+      kind: Response
+      response:
+        desired:
+          composite:
+            resource:
+              apiVersion: example.crossplane.io/v1
+              kind: XR
+          resources:
+            dummy-resource:
+              resource:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: dummy-cm
+                data:
+                  foo: bar
+              ready: READY_TRUE
