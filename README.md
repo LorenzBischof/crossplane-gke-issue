@@ -15,9 +15,19 @@ gcloud container clusters create \
 # Install Crossplane
 helm repo add crossplane-stable https://charts.crossplane.io/stable
 helm repo update
+
+# Upstream image
 helm install crossplane \
     --namespace crossplane-system \
     --create-namespace crossplane-stable/crossplane
+
+# Alternatively, install Crossplane with our patched image
+helm install crossplane \
+    --namespace crossplane-system \
+    --create-namespace crossplane-stable/crossplane \
+    --set image.repository=ghcr.io/lorenzbischof/crossplane-gke-issue \
+    --set image.tag=v2.2.0 \
+    --set image.pullPolicy=Always
 
 kubectl apply -f function.yaml -f composition.yaml -f xrd.yaml
 
