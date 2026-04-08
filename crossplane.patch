@@ -1,0 +1,23 @@
+--- a/internal/controller/apiextensions/composite/composition_functions.go
++++ b/internal/controller/apiextensions/composite/composition_functions.go
+@@ -648,12 +648,14 @@ func (c *FunctionComposer) Compose(ctx context.Context, xr *composite.Unstructur
+ 	xr.SetName(n)
+ 	xr.SetUID(u)
+ 
+-	// Include any pending conditions so we don't lose them. SetConditions
+-	// will set conditions to nil if it's not passed any arguments. SSA
+-	// interprets this as null and rejects it, so we only set them if
+-	// there's actually some to set.
+-	if len(cs) > 0 {
+-		xr.SetConditions(cs...)
++	// Include pending conditions, excluding those that the Reconciler will
++	// re-calculate and set itself (Synced and Ready). This avoids asserting
++	// stale values for these conditions which can cause conflicts.
++	for _, c := range cs {
++		if c.Type == xpv1.TypeSynced || c.Type == xpv1.TypeReady {
++			continue
++		}
++		xr.SetConditions(c)
+ 	}
+ 
+ 	// NOTE(phisco): Here we are fine using a hardcoded field owner as there is
