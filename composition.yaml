@@ -1,32 +1,43 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
-  name: function-dummy
+  name: function-go-templating
 spec:
   compositeTypeRef:
     apiVersion: example.crossplane.io/v1
     kind: XR
   mode: Pipeline
   pipeline:
-  - step: return-some-results
+  - step: render-template
     functionRef:
-      name: function-dummy
+      name: function-go-templating
     input:
-      apiVersion: dummy.fn.crossplane.io/v1beta1
-      kind: Response
-      response:
-        desired:
-          composite:
-            resource:
-              apiVersion: example.crossplane.io/v1
-              kind: XR
-          resources:
-            dummy-resource:
-              resource:
-                apiVersion: v1
-                kind: ConfigMap
-                metadata:
-                  name: dummy-cm
-                data:
-                  foo: bar
-              ready: READY_TRUE
+      apiVersion: gotemplating.fn.crossplane.io/v1beta1
+      kind: GoTemplate
+      source: Inline
+      inline:
+        template: |
+          apiVersion: example.crossplane.io/v1
+          kind: XR
+          status:
+            widgets: {{ .observed.composite.resource.spec.widgets }}
+            {{- if gt (.observed.composite.resource.spec.widgets | int) 1 }}
+            conditions:
+            - type: DirectReady
+              status: "True"
+              lastTransitionTime: "2026-04-08T00:00:00Z"
+              observedGeneration: {{ .observed.composite.resource.metadata.generation }}
+              reason: WidgetsAboveOne
+              message: direct XR status condition via desired composite resource
+            {{- end }}
+          {{- if gt (.observed.composite.resource.spec.widgets | int) 1 }}
+          ---
+          apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+          kind: ClaimConditions
+          conditions:
+          - type: ClaimConditionReady
+            status: "True"
+            reason: WidgetsAboveOne
+            message: widgets is greater than one
+            target: Composite
+          {{- end }}
