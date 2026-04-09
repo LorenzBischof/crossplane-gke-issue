@@ -50,11 +50,11 @@ kubectl patch xr example-xr --type=merge -p '{"spec":{"widgets":1}}'
 
 Expected behavior:
 - `DirectReady` appears when `widgets=2`
-- `ClaimConditionReady` appears when `widgets=2`
+- `ClaimConditionReady` appears when `widgets=2` (without `observedGeneration`)
 - both disappear again when `widgets=1`
 
 Buggy behavior:
 - `DirectReady` appears when `widgets=2`
 - `ClaimConditionReady` appears when `widgets=2`
-- `DirectReady` disappears again when `widgets=1`
-- `ClaimConditionReady` remains even after patching back to `widgets=1`
+- `DirectReady` remains when `widgets=1` (with old `observedGeneration`)
+- `ClaimConditionReady` remains when `widgets=1` (still no `observedGeneration`)
