@@ -1,23 +1,86 @@
+diff --git a/internal/controller/apiextensions/composite/composition_functions.go b/internal/controller/apiextensions/composite/composition_functions.go
+index 5c939e8..586e1c6 100644
 --- a/internal/controller/apiextensions/composite/composition_functions.go
 +++ b/internal/controller/apiextensions/composite/composition_functions.go
-@@ -648,12 +648,14 @@ func (c *FunctionComposer) Compose(ctx context.Context, xr *composite.Unstructur
+@@ -636,18 +636,17 @@ func (c *FunctionComposer) Compose(ctx context.Context, xr *composite.Unstructur
+ 		resources = append(resources, ComposedResource{ResourceName: name, Ready: cd.Ready, Synced: true})
+ 	}
+ 
+-	// Our goal here is to patch our XR's status using server-side apply. We
+-	// want the resulting, patched object loaded into uxr. We need to pass in
+-	// only our "fully specified intent" - i.e. only the fields that we actually
+-	// care about. FromStruct will replace uxr's backing map[string]any with the
+-	// content of GetResource (i.e. the desired status). We then need to set its
+-	// GVK and name so that our client knows what resource to patch.
++	// Load the desired composite resource state from the function pipeline
++	// into xr. FromStruct replaces xr's backing map[string]any, so we must
++	// save and restore identity fields. The status is not persisted here;
++	// the Reconciler will write it via a single SSA status patch after
++	// setting Ready, Synced, and function-returned conditions.
+ 	v := xr.GetAPIVersion()
+ 	k := xr.GetKind()
+ 	ns := xr.GetNamespace()
+ 	n := xr.GetName()
+ 	u := xr.GetUID()
+-	cs := xr.GetConditions()
++	g := xr.GetGeneration()
+ 
+ 	if err := xfn.FromStruct(xr, d.GetComposite().GetResource()); err != nil {
+ 		return CompositionResult{}, errors.Wrap(err, errUnmarshalDesiredXRStatus)
+@@ -658,24 +657,7 @@ func (c *FunctionComposer) Compose(ctx context.Context, xr *composite.Unstructur
+ 	xr.SetNamespace(ns)
  	xr.SetName(n)
  	xr.SetUID(u)
- 
+-
 -	// Include any pending conditions so we don't lose them. SetConditions
 -	// will set conditions to nil if it's not passed any arguments. SSA
 -	// interprets this as null and rejects it, so we only set them if
 -	// there's actually some to set.
 -	if len(cs) > 0 {
 -		xr.SetConditions(cs...)
-+	// Include pending conditions, excluding those that the Reconciler will
-+	// re-calculate and set itself (Synced and Ready). This avoids asserting
-+	// stale values for these conditions which can cause conflicts.
-+	for _, c := range cs {
-+		if c.Type == xpv1.TypeSynced || c.Type == xpv1.TypeReady {
-+			continue
-+		}
-+		xr.SetConditions(c)
+-	}
+-
+-	// NOTE(phisco): Here we are fine using a hardcoded field owner as there is
+-	// no risk of conflict between different XRs.
+-	//nolint:staticcheck // TODO(adamwg) Stop using client.Apply after the v2.2 release.
+-	if err := c.client.Status().Patch(ctx, xr, client.Apply, client.ForceOwnership, client.FieldOwner(FieldOwnerXR)); err != nil {
+-		// Note(phisco): here we are fine with this error being terminal, as
+-		// there is no other resource to apply that might eventually resolve
+-		// this issue.
+-		return CompositionResult{}, errors.Wrap(err, errApplyXRStatus)
+-	}
++	xr.SetGeneration(g)
+ 
+ 	var ready *bool
+ 
+diff --git a/internal/controller/apiextensions/composite/reconciler.go b/internal/controller/apiextensions/composite/reconciler.go
+index 4507934..5b4f0fa 100644
+--- a/internal/controller/apiextensions/composite/reconciler.go
++++ b/internal/controller/apiextensions/composite/reconciler.go
+@@ -752,10 +752,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
+ 				status.MarkConditions(c)
+ 			}
+ 		}
++		// Restore system conditions that may have been cleared when Compose
++		// replaced the XR's backing object.
++		status.MarkConditions(condition)
+ 		_ = r.client.Status().Update(updateCtx, xr)
+ 		return reconcile.Result{}, err
  	}
  
- 	// NOTE(phisco): Here we are fine using a hardcoded field owner as there is
++	// Compose replaces xr's backing object, so re-mark system conditions that
++	// are derived from current controller state before any later status update.
++	status.MarkConditions(condition)
++
+ 	ws := make([]engine.Watch, len(xr.GetResourceReferences()))
+ 	for i, ref := range xr.GetResourceReferences() {
+ 		cr := &kunstructured.Unstructured{}
+@@ -870,7 +877,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
+ 		result = reconcile.Result{RequeueAfter: jitter(res.TTL)}
+ 	}
+ 
+-	return result, errors.Wrap(r.client.Status().Update(updateCtx, xr), errUpdateStatus)
++	return result, errors.Wrap(r.client.Status().Patch(updateCtx, xr, client.Apply, client.ForceOwnership, client.FieldOwner(FieldOwnerXR)), errUpdateStatus)
+ }
+ 
+ type compositionResultMeta struct {
