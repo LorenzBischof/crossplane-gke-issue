@@ -1,6 +1,43 @@
+diff --git a/internal/controller/apiextensions/composite/composition_functions.go b/internal/controller/apiextensions/composite/composition_functions.go
+index 5c939e8..e16accc 100644
 --- a/internal/controller/apiextensions/composite/composition_functions.go
 +++ b/internal/controller/apiextensions/composite/composition_functions.go
-@@ -648,12 +648,14 @@ func (c *FunctionComposer) Compose(ctx context.Context, xr *composite.Unstructur
+@@ -562,9 +562,7 @@ func (c *FunctionComposer) Compose(ctx context.Context, xr *composite.Unstructur
+ 	UpdateResourceRefs(refs, desired)
+ 
+ 	// Persist our updated composed resource references. We want this to be an
+-	// atomic replace of the entire array. Note that we're relying on the status
+-	// patch that immediately follows to load the latest version of uxr from the
+-	// API server.
++	// atomic replace of the entire array.
+ 	//nolint:staticcheck // TODO(adamwg) Stop using client.Apply after the v2.2 release.
+ 	if err := c.client.Patch(ctx, refs, client.Apply, client.ForceOwnership, client.FieldOwner(FieldOwnerXR)); err != nil {
+ 		// It's important we don't proceed if this fails, because we need to be
+@@ -636,18 +634,16 @@ func (c *FunctionComposer) Compose(ctx context.Context, xr *composite.Unstructur
+ 		resources = append(resources, ComposedResource{ResourceName: name, Ready: cd.Ready, Synced: true})
+ 	}
+ 
+-	// Our goal here is to patch our XR's status using server-side apply. We
+-	// want the resulting, patched object loaded into uxr. We need to pass in
+-	// only our "fully specified intent" - i.e. only the fields that we actually
+-	// care about. FromStruct will replace uxr's backing map[string]any with the
+-	// content of GetResource (i.e. the desired status). We then need to set its
+-	// GVK and name so that our client knows what resource to patch.
++	// Load the desired composite resource state from the function pipeline
++	// into xr. FromStruct replaces xr's backing map[string]any, so we must
++	// save and restore identity fields. The status is not persisted here;
++	// the Reconciler will write it via a single SSA status patch after
++	// setting Ready, Synced, and function-returned conditions.
+ 	v := xr.GetAPIVersion()
+ 	k := xr.GetKind()
+ 	ns := xr.GetNamespace()
+ 	n := xr.GetName()
+ 	u := xr.GetUID()
+-	cs := xr.GetConditions()
+ 
+ 	if err := xfn.FromStruct(xr, d.GetComposite().GetResource()); err != nil {
+ 		return CompositionResult{}, errors.Wrap(err, errUnmarshalDesiredXRStatus)
+@@ -659,24 +655,6 @@ func (c *FunctionComposer) Compose(ctx context.Context, xr *composite.Unstructur
  	xr.SetName(n)
  	xr.SetUID(u)
  
@@ -10,14 +47,31 @@
 -	// there's actually some to set.
 -	if len(cs) > 0 {
 -		xr.SetConditions(cs...)
-+	// Include pending conditions, excluding those that the Reconciler will
-+	// re-calculate and set itself (Synced and Ready). This avoids asserting
-+	// stale values for these conditions which can cause conflicts.
-+	for _, c := range cs {
-+		if c.Type == xpv1.TypeSynced || c.Type == xpv1.TypeReady {
-+			continue
-+		}
-+		xr.SetConditions(c)
+-	}
+-
+-	// NOTE(phisco): Here we are fine using a hardcoded field owner as there is
+-	// no risk of conflict between different XRs.
+-	//nolint:staticcheck // TODO(adamwg) Stop using client.Apply after the v2.2 release.
+-	if err := c.client.Status().Patch(ctx, xr, client.Apply, client.ForceOwnership, client.FieldOwner(FieldOwnerXR)); err != nil {
+-		// Note(phisco): here we are fine with this error being terminal, as
+-		// there is no other resource to apply that might eventually resolve
+-		// this issue.
+-		return CompositionResult{}, errors.Wrap(err, errApplyXRStatus)
+-	}
+-
+ 	var ready *bool
+ 
+ 	switch d.GetComposite().GetReady() {
+diff --git a/internal/controller/apiextensions/composite/reconciler.go b/internal/controller/apiextensions/composite/reconciler.go
+index 4507934..30c5e99 100644
+--- a/internal/controller/apiextensions/composite/reconciler.go
++++ b/internal/controller/apiextensions/composite/reconciler.go
+@@ -870,7 +870,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
+ 		result = reconcile.Result{RequeueAfter: jitter(res.TTL)}
  	}
  
- 	// NOTE(phisco): Here we are fine using a hardcoded field owner as there is
+-	return result, errors.Wrap(r.client.Status().Update(updateCtx, xr), errUpdateStatus)
++	return result, errors.Wrap(r.client.Status().Patch(updateCtx, xr, client.Apply, client.ForceOwnership, client.FieldOwner(FieldOwnerXR)), errUpdateStatus)
+ }
+ 
+ type compositionResultMeta struct {

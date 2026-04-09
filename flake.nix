@@ -17,8 +17,13 @@
     }:
     let
       # Reference branch/tag
-      # Only used for the OCI image tag
       version = "v2.2.0";
+      # Only used for the OCI image tag.
+      imageTag =
+        let
+          envTag = builtins.getEnv "IMAGE_TAG";
+        in
+        if envTag != "" then envTag else version;
 
       system = "x86_64-linux";
       pkgs = import nixpkgs {
@@ -50,7 +55,7 @@
 
       # Build images from patched source
       images = build.images {
-        inherit version;
+        version = imageTag;
         platforms = imagePlatforms;
       };
 
@@ -63,7 +68,8 @@
       };
 
       apps.${system}.push-images = apps.pushImages {
-        inherit version images;
+        version = imageTag;
+        inherit images;
         platforms = imagePlatforms;
       };
 
