@@ -63,10 +63,31 @@ index 5c939e8..e16accc 100644
  
  	switch d.GetComposite().GetReady() {
 diff --git a/internal/controller/apiextensions/composite/reconciler.go b/internal/controller/apiextensions/composite/reconciler.go
-index 4507934..30c5e99 100644
+index 4507934..f1d4f8b 100644
 --- a/internal/controller/apiextensions/composite/reconciler.go
 +++ b/internal/controller/apiextensions/composite/reconciler.go
-@@ -870,7 +870,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
+@@ -736,6 +736,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
+ 				status.MarkConditions(c)
+ 			}
+ 		}
++		// Restore system conditions that may have been cleared when Compose
++		// replaced the XR's backing object.
++		status.MarkConditions(condition)
+ 		_ = r.client.Status().Update(updateCtx, xr)
+ 		return reconcile.Result{}, err
+ 	}
+@@ -748,6 +751,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
+ 		return reconcile.Result{}, err
+ 	}
+ 
++	// Compose replaces xr's backing object, so re-mark system conditions that
++	// are derived from current controller state before any later status update.
++	status.MarkConditions(condition)
++
+ 	ws := make([]engine.Watch, len(xr.GetResourceReferences()))
+ 	for i, ref := range xr.GetResourceReferences() {
+ 		cr := &kunstructured.Unstructured{}
+@@ -870,7 +877,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
  		result = reconcile.Result{RequeueAfter: jitter(res.TTL)}
  	}
  
