@@ -1,9 +1,14 @@
-# Crossplane GKE Issue
+# Crossplane Condition Cleanup Repro
 
-When editing an XR (Composite Resource), the `observedGeneration` field of the status conditions Synced and Ready rapidly change back and forth between the current and previous generation values. This triggers excessive reconciliations and is sometimes only stopped by the circuit breaker.
+This branch reproduces both condition write paths discussed in
+https://github.com/crossplane/crossplane/issues/7062#issuecomment-4067764618:
+when a composition function only sometimes sets a custom composite condition,
+the condition written via `ClaimConditions` may remain forever instead of being
+removed when the function stops emitting it. The composition now emits two
+custom conditions on the same toggle:
 
-This only seems to happen on GKE and I could not reproduce it locally in Kind.
-
+- `DirectReady` by writing directly to `XR.status.conditions`
+- `ClaimConditionReady` via `ClaimConditions`
 
 ```sh
 # Create GKE cluster (must be authenticated)
@@ -19,7 +24,9 @@ helm repo update
 # Upstream image
 helm install crossplane \
     --namespace crossplane-system \
-    --create-namespace crossplane-stable/crossplane
+    --create-namespace \
+    --wait \
+    crossplane-stable/crossplane
 
 # Alternatively, install Crossplane with our patched image
 helm install crossplane \
@@ -36,5 +43,18 @@ kubectl apply -f xr.yaml
 # In another terminal
 kubectl get xrs -w -oyaml | yq '.status.conditions'
 
+# The composition only emits both custom conditions when widgets > 1.
 kubectl patch xr example-xr --type=merge -p '{"spec":{"widgets":2}}'
+kubectl patch xr example-xr --type=merge -p '{"spec":{"widgets":1}}'
 ```
+
+Expected behavior:
+- `DirectReady` appears when `widgets=2`
+- `ClaimConditionReady` appears when `widgets=2` (without `observedGeneration`)
+- both disappear again when `widgets=1`
+
+Buggy behavior:
+- `DirectReady` appears when `widgets=2`
+- `ClaimConditionReady` appears when `widgets=2`
+- `DirectReady` remains when `widgets=1` (with old `observedGeneration`)
+- `ClaimConditionReady` remains when `widgets=1` (still no `observedGeneration`)
